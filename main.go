@@ -171,15 +171,12 @@ func main() {
 	h := newHub()
 
 	// Serve static files (frontend) dari ./static
-	fs := http.FileServer(http.Dir("./static"))
+	fs := http.FileServer(http.Dir("."))
 	http.Handle("/", fs)
 
 	// WebSocket signaling
 	http.HandleFunc("/ws", wsHandler(h))
 	port := ":5555"
-
-	log.Fatal(http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil))
-
 	log.Println("Server berjalan di http://localhost" + port)
-
+	log.Fatal(http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil))
 }
