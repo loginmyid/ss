@@ -1,5 +1,6 @@
 // ====== Konfigurasi sederhana ======
 const WS_PATH = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+console.log("WS_PATH:", WS_PATH);
 // Di intranet biasa, tanpa STUN sudah cukup. Jika perlu, tambahkan server STUN.
 // const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const ICE_SERVERS = [];
