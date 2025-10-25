@@ -178,7 +178,8 @@ func main() {
 	http.HandleFunc("/ws", wsHandler(h))
 
 	log.Println("Server berjalan di http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServeTLS(":8443", "ss.pem", "ss.pem", nil))
+	//log.Fatal(http.ListenAndServe(":8080", nil))
 
 	// --- Opsional HTTPS (jika ingin pakai IP LAN & screen-capture di presenter tanpa flags) ---
 	// 1) Buat sertifikat self-signed (mis. mkcert) lalu:
