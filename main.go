@@ -176,12 +176,10 @@ func main() {
 
 	// WebSocket signaling
 	http.HandleFunc("/ws", wsHandler(h))
+	port := ":5555"
 
-	log.Println("Server berjalan di http://localhost:8080")
-	log.Fatal(http.ListenAndServeTLS(":8443", "ss.pem", "ss.pem", nil))
-	//log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServeTLS(port, "cert.pem", "key.pem", nil))
 
-	// --- Opsional HTTPS (jika ingin pakai IP LAN & screen-capture di presenter tanpa flags) ---
-	// 1) Buat sertifikat self-signed (mis. mkcert) lalu:
-	// log.Fatal(http.ListenAndServeTLS(":8443", "cert.pem", "key.pem", nil))
+	log.Println("Server berjalan di http://localhost" + port)
+
 }

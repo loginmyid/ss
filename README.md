@@ -6,6 +6,6 @@ screen sharing
 winget install --id FiloSottile.mkcert -e
 
 mkcert -install
-mkcert your-lan-ip
-# hasil: your-lan-ip.pem, your-lan-ip-key.pem
+mkcert -key-file key.pem -cert-file cert.pem 192.168.123.106 share.local
+
 ```
