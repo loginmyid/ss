@@ -2,8 +2,8 @@
 const WS_PATH = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
 console.log("WS_PATH:", WS_PATH);
 // Di intranet biasa, tanpa STUN sudah cukup. Jika perlu, tambahkan server STUN.
-// const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
-const ICE_SERVERS = [];
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+//const ICE_SERVERS = [];
 
 // ====== Util JSCroot (opsional) ======
 const $id = (x) => document.getElementById(x);
@@ -79,7 +79,7 @@ async function startPresenter() {
       await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
     } else if (msg.type === "ice" && msg.candidate) {
       try { await pc.addIceCandidate(msg.candidate); } catch {}
-      } else if (msg.type === "need-offer") {
+    } else if (msg.type === "need-offer") {
         if (!pc) return;
         if (pc.localDescription) {
           // Kirim ulang offer yang ada (renegosiasi aman)
@@ -148,8 +148,9 @@ async function startViewer() {
         }
       //setText(statusEl, `Terhubung ke room: ${room}. Menunggu stream...`);
     } else if (msg.type === "ice" && msg.candidate) {
-        try { await pc.addIceCandidate(msg.candidate); } catch {}
+      try { await pc.addIceCandidate(msg.candidate); } catch {}
     } else if (msg.type === "joined") {
+      setText(statusEl, `Terhubung ke room: ${room}. Meminta offer...`);
       wsSend({ type: "need-offer" });
     }
   };
