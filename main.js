@@ -73,6 +73,9 @@ async function startPresenter() {
 
   // 1) WebSocket connect & join room
   ws = await connectWS(room);
+  ws.onclose = () => setText(statusEl, "Koneksi signaling terputus.");
+  ws.onerror = () => setText(statusEl, "Gagal tersambung ke signaling.");
+
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data || "{}");
     if (msg.type === "answer") {
@@ -128,6 +131,8 @@ async function startViewer() {
   setText(statusEl, "Menghubungkan ke room...");
 
   ws = await connectWS(room);
+  ws.onclose = () => setText(statusEl, "Koneksi signaling terputus.");
+  ws.onerror = () => setText(statusEl, "Gagal tersambung ke signaling.");
 
   ws.onmessage = async (e) => {
     const msg = JSON.parse(e.data || "{}");
@@ -136,6 +141,12 @@ async function startViewer() {
         if (!pc) createPC();
         // Selalu set remote dulu (aman utk renegosiasi)
         await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        
+        // === Tambahan: hentikan retry need-offer karena kita sudah dapat offer ===
+        if (window._needOfferTimer) {
+          clearInterval(window._needOfferTimer);
+          window._needOfferTimer = null;
+        }
         // Hanya jawab kalau state valid
         if (pc.signalingState === "have-remote-offer") {
           const answer = await pc.createAnswer();
@@ -152,6 +163,18 @@ async function startViewer() {
     } else if (msg.type === "joined") {
       setText(statusEl, `Terhubung ke room: ${room}. Meminta offer...`);
       wsSend({ type: "need-offer" });
+      // === Tambahan: retry tiap 2 detik sampai offer diterima ===
+      if (!window._needOfferTimer) {
+        window._needOfferTimer = setInterval(() => {
+          // kalau sudah ada remoteDescription, stop retry
+          if (pc && pc.remoteDescription) {
+            clearInterval(window._needOfferTimer);
+            window._needOfferTimer = null;
+          } else {
+            wsSend({ type: "need-offer" });
+          }
+        }, 2000);
+      }
     }
   };
 }
