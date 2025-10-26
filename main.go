@@ -20,32 +20,44 @@ type client struct {
 	room string
 }
 
+type roomState struct {
+	members   map[*client]bool
+	presenter *client
+}
+
 type hub struct {
 	mu    sync.Mutex
-	rooms map[string]map[*client]bool
+	rooms map[string]*roomState
 }
 
 func newHub() *hub {
-	return &hub{
-		rooms: make(map[string]map[*client]bool),
-	}
+	return &hub{rooms: make(map[string]*roomState)}
 }
 
 func (h *hub) join(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, ok := h.rooms[c.room]; !ok {
-		h.rooms[c.room] = make(map[*client]bool)
+	rs, ok := h.rooms[c.room]
+	if !ok {
+		rs = &roomState{members: make(map[*client]bool)}
+		h.rooms[c.room] = rs
 	}
-	h.rooms[c.room][c] = true
+	rs.members[c] = true
 }
 
 func (h *hub) leave(c *client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if set, ok := h.rooms[c.room]; ok {
-		delete(set, c)
-		if len(set) == 0 {
+	if rs, ok := h.rooms[c.room]; ok {
+		delete(rs.members, c)
+		if rs.presenter == c {
+			rs.presenter = nil
+			// Beri tahu semua anggota bahwa presenter pergi
+			for m := range rs.members {
+				_ = m.conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"presenter-left"}`))
+			}
+		}
+		if len(rs.members) == 0 {
 			delete(h.rooms, c.room)
 		}
 	}
@@ -53,11 +65,22 @@ func (h *hub) leave(c *client) {
 
 func (h *hub) broadcastToRoom(sender *client, msgType int, data []byte) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	for c := range h.rooms[sender.room] {
+	rs, ok := h.rooms[sender.room]
+	if !ok || rs == nil {
+		h.mu.Unlock()
+		return
+	}
+	// salin penerima ke slice agar websocket write di luar lock
+	recips := make([]*client, 0, len(rs.members))
+	for c := range rs.members {
 		if c != sender {
-			_ = c.conn.WriteMessage(msgType, data)
+			recips = append(recips, c)
 		}
+	}
+	h.mu.Unlock()
+
+	for _, c := range recips {
+		_ = c.conn.WriteMessage(msgType, data)
 	}
 }
 
@@ -70,7 +93,6 @@ func wsHandler(h *hub) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		// Client harus kirim pesan JOIN lebih dulu: {type:"join", room:"abc"}
 		var cli *client
 
 		for {
@@ -81,21 +103,10 @@ func wsHandler(h *hub) http.HandlerFunc {
 				}
 				return
 			}
-
-			// Deteksi join sederhana tanpa JSON unmarshal penuh: cari "join" & "room"
-			// (Untuk kesederhanaan; produksi sebaiknya unmarshal JSON.)
-			if cli == nil && (string(msg) == "" || string(msg) == "ping") {
-				// abaikan ping awal
-				continue
-			}
-
+			// Inisialisasi client saat menerima JOIN pertama
 			if cli == nil {
-				// Minimal parse room dari payload
-				// Contoh payload: {"type":"join","room":"ABC"}
-				// Di sini demi ringkas kita parsing amat sederhana.
 				room := extractField(msg, `"room"`)
 				if room == "" {
-					// Jika tak ada room, tolak
 					_ = conn.WriteMessage(mt, []byte(`{"type":"error","reason":"missing room"}`))
 					continue
 				}
@@ -105,7 +116,43 @@ func wsHandler(h *hub) http.HandlerFunc {
 				continue
 			}
 
-			// Relay semua pesan non-join ke anggota lain di room yang sama
+			// --- Logika presenter & end-presentation ---
+			typ := extractField(msg, `"type"`)
+
+			if typ == "end-presentation" {
+				// Kosongkan presenter untuk room ini, beri tahu members lain
+				h.mu.Lock()
+				if rs, ok := h.rooms[cli.room]; ok {
+					if rs.presenter == cli {
+						rs.presenter = nil
+						for m := range rs.members {
+							if m != cli {
+								_ = m.conn.WriteMessage(mt, []byte(`{"type":"end-presentation"}`))
+							}
+						}
+					}
+				}
+				h.mu.Unlock()
+				continue
+			}
+
+			if typ == "offer" {
+				// Tetapkan presenter jika belum ada; jika sudah ada dan bukan dia, abaikan offer ini
+				h.mu.Lock()
+				rs := h.rooms[cli.room]
+				if rs.presenter == nil {
+					rs.presenter = cli
+				}
+				isPresenter := (rs.presenter == cli)
+				h.mu.Unlock()
+				if !isPresenter {
+					// TOLAK presenter kedua
+					_ = cli.conn.WriteMessage(mt, []byte(`{"type":"error","reason":"presenter-exists"}`))
+					continue
+				}
+			}
+
+			// Relay (broadcast) ke semua anggota lain di room
 			h.broadcastToRoom(cli, mt, msg)
 		}
 	}

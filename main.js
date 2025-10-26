@@ -94,6 +94,11 @@ async function startPresenter() {
           wsSend({ type: "offer", sdp: offer });
         }
     }
+    if (msg.type === "end-presentation" || msg.type === "presenter-left") {
+    // Presenter berhenti atau terputus → viewer tetap standby, retry need-offer jalan.
+    setText(statusEl, "Presenter mengakhiri sesi. Menunggu presenter baru...");
+    // Biarkan retry need-offer (viewer) tetap aktif, tidak perlu reset apa pun.
+    }
   };
 
   // 2) Ambil layar (Secure Context: gunakan http://localhost untuk presenter)
@@ -117,6 +122,7 @@ async function startPresenter() {
   wsSend({ type: "offer", sdp: offer });
 
   setText(statusEl, `Presenter siap. Room: ${room}. Berikan kode ini ke viewer.`);
+  btnEnd.style.display = "inline-block";
 }
 
 // ====== Viewer Flow ======
@@ -176,6 +182,11 @@ async function startViewer() {
         }, 2000);
       }
     }
+    if (msg.type === "end-presentation" || msg.type === "presenter-left") {
+    // Presenter berhenti atau terputus → viewer tetap standby, retry need-offer jalan.
+    setText(statusEl, "Presenter mengakhiri sesi. Menunggu presenter baru...");
+    // Biarkan retry need-offer (viewer) tetap aktif, tidak perlu reset apa pun.
+    }
   };
 }
 
@@ -189,4 +200,30 @@ btnPresenter.addEventListener("click", () => {
 btnViewer.addEventListener("click", () => {
   isPresenter = false;
   startViewer();
+});
+
+
+const btnEnd = $id("btnEnd");
+
+function stopPresenting() {
+  try {
+    if (videoEl.srcObject) {
+      videoEl.srcObject.getTracks().forEach(t => t.stop());
+      videoEl.srcObject = null;
+    }
+    if (pc) {
+      pc.getSenders().forEach(s => { try { s.replaceTrack(null); } catch {} });
+      pc.close();
+      pc = null;
+    }
+  } catch {}
+  setText(statusEl, "Presentasi diakhiri.");
+  btnEnd.style.display = "none";
+  startedPresenter = false; // <— supaya bisa klik “Jadi Presenter” lagi
+}
+
+
+btnEnd.addEventListener("click", () => {
+  wsSend({ type: "end-presentation" });
+  stopPresenting();
 });
