@@ -20,6 +20,8 @@ const videoEl = $id("video");
 let ws = null;
 let pc = null;
 let isPresenter = false;
+let cachedOffer = null;
+
 
 // ====== WebSocket Signaling ======
 function connectWS(room) {
@@ -56,9 +58,11 @@ function createPC() {
 
   return pc;
 }
-
+let startedViewer = false, startedPresenter = false;
 // ====== Presenter Flow ======
 async function startPresenter() {
+  if (startedPresenter) return;
+  startedPresenter = true;
   const room = (roomInput.value || "").trim();
   if (!room) {
     setText(statusEl, "Isi Room Code dulu.");
@@ -76,12 +80,16 @@ async function startPresenter() {
     } else if (msg.type === "ice" && msg.candidate) {
       try { await pc.addIceCandidate(msg.candidate); } catch {}
       } else if (msg.type === "need-offer") {
-      // Viewer minta OFFER; kirim ulang
-      if (pc) {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        wsSend({ type: "offer", sdp: offer });
-      }
+        if (!pc) return;
+        if (pc.localDescription) {
+          // Kirim ulang offer yang ada (renegosiasi aman)
+          wsSend({ type: "offer", sdp: pc.localDescription });
+        } else {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          cachedOffer = offer;
+          wsSend({ type: "offer", sdp: offer });
+        }
     }
   };
 
@@ -102,6 +110,7 @@ async function startPresenter() {
   // 4) Buat Offer dan kirim via WS
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
+  cachedOffer = offer;
   wsSend({ type: "offer", sdp: offer });
 
   setText(statusEl, `Presenter siap. Room: ${room}. Berikan kode ini ke viewer.`);
@@ -109,6 +118,7 @@ async function startPresenter() {
 
 // ====== Viewer Flow ======
 async function startViewer() {
+  if(startedViewer) return; startedViewer = true;
   const room = (roomInput.value || "").trim();
   if (!room) {
     setText(statusEl, "Isi Room Code dulu.");
@@ -123,18 +133,22 @@ async function startViewer() {
     const msg = JSON.parse(e.data || "{}");
 
     if (msg.type === "offer" && msg.sdp) {
-      // 1) Terima offer, buat PC
-      createPC();
-      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-
-      // 2) Buat answer, kirim balik
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      wsSend({ type: "answer", sdp: answer });
-
-      setText(statusEl, `Terhubung ke room: ${room}. Menunggu stream...`);
+        if (!pc) createPC();
+        // Selalu set remote dulu (aman utk renegosiasi)
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        // Hanya jawab kalau state valid
+        if (pc.signalingState === "have-remote-offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          wsSend({ type: "answer", sdp: answer });
+        } else {
+          // Jika sudah 'stable' atau state lain (mis. duplikat offer), abaikan
+          // atau bisa log untuk debug
+          console.debug("Skip answer; signalingState=", pc.signalingState);
+        }
+      //setText(statusEl, `Terhubung ke room: ${room}. Menunggu stream...`);
     } else if (msg.type === "ice" && msg.candidate) {
-      try { await pc.addIceCandidate(msg.candidate); } catch {}
+        try { await pc.addIceCandidate(msg.candidate); } catch {}
     } else if (msg.type === "joined") {
       wsSend({ type: "need-offer" });
     }
@@ -142,6 +156,7 @@ async function startViewer() {
 }
 
 // ====== Tombol ======
+
 btnPresenter.addEventListener("click", () => {
   isPresenter = true;
   startPresenter();
