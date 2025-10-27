@@ -21,6 +21,8 @@ let ws = null;
 let pc = null;
 let isPresenter = false;
 let cachedOffer = null;
+// Retry timer for viewer to request a fresh offer
+let needOfferTimer = null;
 
 
 // ====== WebSocket Signaling ======
@@ -59,6 +61,44 @@ function createPC() {
   return pc;
 }
 let startedViewer = false, startedPresenter = false;
+// ==== Helpers (viewer) ====
+function startNeedOfferRetry() {
+  if (!needOfferTimer) {
+    // immediately request once
+    wsSend({ type: "need-offer" });
+    needOfferTimer = setInterval(() => {
+      if (pc && pc.remoteDescription) {
+        stopNeedOfferRetry();
+      } else {
+        wsSend({ type: "need-offer" });
+      }
+    }, 2000);
+  }
+}
+
+function stopNeedOfferRetry() {
+  if (needOfferTimer) {
+    clearInterval(needOfferTimer);
+    needOfferTimer = null;
+  }
+}
+
+function resetViewerPeer() {
+  try {
+    if (pc) {
+      pc.ontrack = null;
+      pc.onicecandidate = null;
+      pc.close();
+      pc = null;
+    }
+  } catch {}
+  try {
+    if (videoEl.srcObject) {
+      videoEl.srcObject.getTracks().forEach(t => t.stop());
+      videoEl.srcObject = null;
+    }
+  } catch {}
+}
 // ====== Presenter Flow ======
 async function startPresenter() {
   if (startedPresenter) return;
@@ -82,6 +122,12 @@ async function startPresenter() {
       await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
     } else if (msg.type === "ice" && msg.candidate) {
       try { await pc.addIceCandidate(msg.candidate); } catch {}
+    } else if (msg.type === "error" && msg.reason === "presenter-exists") {
+      // Sudah ada presenter lain di room ini
+      setText(statusEl, "Presenter lain sedang aktif di room ini.");
+      // hentikan lokal agar tidak menggangu
+      stopPresenting();
+      return;
     } else if (msg.type === "need-offer") {
         if (!pc) return;
         if (pc.localDescription) {
@@ -95,9 +141,8 @@ async function startPresenter() {
         }
     }
     if (msg.type === "end-presentation" || msg.type === "presenter-left") {
-    // Presenter berhenti atau terputus → viewer tetap standby, retry need-offer jalan.
-    setText(statusEl, "Presenter mengakhiri sesi. Menunggu presenter baru...");
-    // Biarkan retry need-offer (viewer) tetap aktif, tidak perlu reset apa pun.
+      // Informasi ke semua: viewer tidak perlu melakukan apa-apa di sisi presenter
+      setText(statusEl, "Presenter mengakhiri sesi.");
     }
   };
 
@@ -149,10 +194,7 @@ async function startViewer() {
         await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         
         // === Tambahan: hentikan retry need-offer karena kita sudah dapat offer ===
-        if (window._needOfferTimer) {
-          clearInterval(window._needOfferTimer);
-          window._needOfferTimer = null;
-        }
+        stopNeedOfferRetry();
         // Hanya jawab kalau state valid
         if (pc.signalingState === "have-remote-offer") {
           const answer = await pc.createAnswer();
@@ -168,24 +210,14 @@ async function startViewer() {
       try { await pc.addIceCandidate(msg.candidate); } catch {}
     } else if (msg.type === "joined") {
       setText(statusEl, `Terhubung ke room: ${room}. Meminta offer...`);
-      wsSend({ type: "need-offer" });
-      // === Tambahan: retry tiap 2 detik sampai offer diterima ===
-      if (!window._needOfferTimer) {
-        window._needOfferTimer = setInterval(() => {
-          // kalau sudah ada remoteDescription, stop retry
-          if (pc && pc.remoteDescription) {
-            clearInterval(window._needOfferTimer);
-            window._needOfferTimer = null;
-          } else {
-            wsSend({ type: "need-offer" });
-          }
-        }, 2000);
-      }
+      startNeedOfferRetry();
     }
     if (msg.type === "end-presentation" || msg.type === "presenter-left") {
-    // Presenter berhenti atau terputus → viewer tetap standby, retry need-offer jalan.
-    setText(statusEl, "Presenter mengakhiri sesi. Menunggu presenter baru...");
-    // Biarkan retry need-offer (viewer) tetap aktif, tidak perlu reset apa pun.
+      // Reset peer viewer supaya siap menerima presenter berikutnya
+      resetViewerPeer();
+      setText(statusEl, "Presenter mengakhiri sesi. Menunggu presenter baru...");
+      // Pastikan kita kembali meminta offer secara berkala
+      startNeedOfferRetry();
     }
   };
 }

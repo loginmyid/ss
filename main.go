@@ -136,21 +136,23 @@ func wsHandler(h *hub) http.HandlerFunc {
 				continue
 			}
 
-			if typ == "offer" {
-				// Tetapkan presenter jika belum ada; jika sudah ada dan bukan dia, abaikan offer ini
-				h.mu.Lock()
-				rs := h.rooms[cli.room]
+		if typ == "offer" {
+			// Tetapkan presenter jika belum ada; jika sudah ada dan bukan dia, abaikan offer ini
+			h.mu.Lock()
+			rs, ok := h.rooms[cli.room]
+			if ok {
 				if rs.presenter == nil {
 					rs.presenter = cli
 				}
-				isPresenter := (rs.presenter == cli)
-				h.mu.Unlock()
-				if !isPresenter {
-					// TOLAK presenter kedua
-					_ = cli.conn.WriteMessage(mt, []byte(`{"type":"error","reason":"presenter-exists"}`))
-					continue
-				}
 			}
+			isPresenter := ok && (rs.presenter == cli)
+			h.mu.Unlock()
+			if !isPresenter {
+				// TOLAK presenter kedua
+				_ = cli.conn.WriteMessage(mt, []byte(`{"type":"error","reason":"presenter-exists"}`))
+				continue
+			}
+		}
 
 			// Relay (broadcast) ke semua anggota lain di room
 			h.broadcastToRoom(cli, mt, msg)
